@@ -72,15 +72,10 @@ enum CliCommands {
 
 #[derive(Debug, Parser)]
 struct CliArgs {
-    #[clap(short = 'i', long = "input", help = "Path to input file", global(true))]
+    #[clap(short = 'i', long = "input", help = "Path to input file")]
     input_file: PathBuf,
 
-    #[clap(
-        short = 'o',
-        long = "output",
-        help = "Path to output file",
-        global(true)
-    )]
+    #[clap(short = 'o', long = "output", help = "Path to output file")]
     output_file: PathBuf,
 
     #[clap(subcommand)]

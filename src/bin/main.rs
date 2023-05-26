@@ -1,10 +1,14 @@
+use anyhow::{bail, Result};
+use clap::Parser;
+
 use std::fs::File;
 use std::io;
 use std::path::PathBuf;
 
-use anyhow::Result;
-use clap::Parser;
+use io::prelude::*;
+use io::{BufReader, BufWriter};
 
+/*
 use image::{DynamicImage, GenericImage, GenericImageView, Pixels};
 use io::{Read, Write};
 use serde::{Deserialize, Serialize};
@@ -102,6 +106,7 @@ where
     W: Write,
 {
     use image::GenericImageView;
+
     let mut pixels = image.pixels();
 
     let mut header_buf = io::Cursor::new(vec![0u8; 8]);
@@ -121,60 +126,130 @@ where
     }
 
     Ok(())
+} */
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum OutputFormat {
+    Png,
+    Jpg,
+    Gif,
+    Ico,
 }
+
+impl From<OutputFormat> for image::ImageOutputFormat {
+    fn from(value: OutputFormat) -> Self {
+        use OutputFormat::*;
+        match value {
+            Png => Self::Png,
+            Jpg => Self::Jpeg(100),
+            Gif => Self::Gif,
+            Ico => Self::Ico,
+        }
+    }
+}
+
+#[derive(Debug, clap::Args)]
+struct EncodeArgs {
+    #[clap(short = 'f', long = "format", help = "Format of the output image")]
+    format: OutputFormat,
+}
+
+#[derive(Debug, clap::Args)]
+struct DecodeArgs {}
 
 #[derive(Debug, clap::Subcommand)]
 enum CliCommands {
-    Decode,
-    Encode,
+    Decode(DecodeArgs),
+    Encode(EncodeArgs),
 }
 
 #[derive(Debug, Parser)]
 struct CliArgs {
-    #[clap(short = 'f', long = "file")]
-    img_file: PathBuf,
+    #[clap(short = 'i', long = "input", help = "Path to input file", global(true))]
+    input_file: Option<PathBuf>,
+
+    #[clap(
+        short = 'o',
+        long = "output",
+        help = "Path to output file",
+        global(true)
+    )]
+    output_file: Option<PathBuf>,
 
     #[clap(subcommand)]
     command: CliCommands,
 }
 
-fn decode(args: &CliArgs) -> Result<()> {
-    let file = File::options().read(true).open(&args.img_file)?;
-    let reader = io::BufReader::new(file);
+fn decode(global_args: &CliArgs, cmd_args: &DecodeArgs) -> Result<()> {
+    let input_file = File::options().read(true).open(
+        global_args.input_file.as_ref().unwrap(), //.unwrap_or(&PathBuf::from("/dev/stdin")),
+    )?;
+    let mut input_file = BufReader::new(input_file);
 
-    let img = image::io::Reader::new(reader)
+    let output_file = File::options()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(
+            global_args
+                .output_file
+                .as_ref()
+                .unwrap_or(&PathBuf::from("/dev/stdout")),
+        )?;
+    let mut output_file = BufWriter::new(output_file);
+
+    let i = image::io::Reader::new(&mut input_file)
         .with_guessed_format()?
         .decode()?;
 
-    decode_image(&img, io::stdout())?;
+    use image::DynamicImage;
+    let data = match i {
+        DynamicImage::ImageRgb8(v) => imgcode::from_image(v),
+        DynamicImage::ImageRgba8(v) => imgcode::from_image(v),
+        _ => bail!("unsupported image format"),
+    }?;
+
+    output_file.write_all(&data)?;
 
     Ok(())
 }
 
-fn encode(args: &CliArgs) -> Result<()> {
-    // read data from stdin
-    let reader = io::BufReader::new(io::stdin());
+fn encode(global_args: &CliArgs, cmd_args: &EncodeArgs) -> Result<()> {
+    let mut data = Vec::with_capacity(2048);
 
-    let mut img = DynamicImage::ImageRgba8(image::RgbaImage::new(64, 64));
-    encode_bytes_to_image(&mut img, reader)?;
+    let input_file = File::options().read(true).open(
+        global_args
+            .input_file
+            .as_ref()
+            .unwrap_or(&PathBuf::from("/dev/stdin")),
+    )?;
+    let mut input_file = BufReader::new(input_file);
 
-    let out_file = File::options()
+    let output_file = File::options()
         .write(true)
         .truncate(true)
         .create(true)
-        .open(&args.img_file)?;
-    let mut writer = io::BufWriter::new(out_file);
-    img.write_to(&mut writer, image::ImageFormat::Png)?;
+        .open(
+            global_args
+                .output_file
+                .as_ref()
+                .unwrap_or(&PathBuf::from("/dev/stdout")),
+        )?;
+    let mut output_file = BufWriter::new(output_file);
+
+    input_file.read_to_end(&mut data)?;
+    let i = imgcode::to_image::<image::RgbaImage>(&data, 1.0)?;
+    i.write_to(&mut output_file, cmd_args.format)?;
 
     Ok(())
 }
 
 fn try_main() -> Result<()> {
-    let args = CliArgs::parse();
+    let global_args = CliArgs::parse();
 
-    match args.command {
-        CliCommands::Encode => encode(&args),
-        CliCommands::Decode => decode(&args),
+    match &global_args.command {
+        CliCommands::Decode(cmd_args) => decode(&global_args, cmd_args),
+        CliCommands::Encode(cmd_args) => encode(&global_args, cmd_args),
     }
 }
 

@@ -1,5 +1,10 @@
 {
 	"cSpell.words": [
-		"bincode"
+		"bincode",
+		"imgcode",
+		"subslice"
+	],
+	"rust-analyzer.check.extraArgs": [
+		"--lib"
 	]
 }

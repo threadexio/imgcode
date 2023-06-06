@@ -1,104 +1,171 @@
-use crate::util::*;
+use std::mem;
 
-pub trait Image {
-    const PIXEL_SIZE: u64;
+use crate::private::Sealed;
 
-    fn new_with_dimensions(x: u64, y: u64) -> Self
+pub trait Image: Sealed {
+    type ChannelType;
+    const CHANNEL_NUM: u32;
+
+    #[allow(clippy::cast_possible_truncation)]
+    const PIXEL_SIZE: u32 = (mem::size_of::<Self::ChannelType>() as u32) * Self::CHANNEL_NUM;
+
+    fn new_with_dimensions(x: u32, y: u32) -> Self
     where
         Self: Sized;
 
-    fn width(&self) -> u64;
+    fn width(&self) -> u32;
+    fn height(&self) -> u32;
 
-    fn write_pixel(&mut self, x: u64, y: u64, buf: &[u8], pos: u64) -> Option<usize>;
-    fn read_pixel(&self, x: u64, y: u64) -> Option<&[u8]>;
+    fn get_pixel(&self, x: u32, y: u32) -> Option<&[u8]>;
+    fn get_pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut [u8]>;
 }
 
-impl<T> Image for &mut T
-where
-    T: Image,
-{
-    const PIXEL_SIZE: u64 = T::PIXEL_SIZE;
+mod impls {
+    use std::mem;
+    use std::slice;
 
-    fn write_pixel(&mut self, x: u64, y: u64, buf: &[u8], pos: u64) -> Option<usize> {
-        (**self).write_pixel(x, y, buf, pos)
+    use crate::private::Sealed;
+    use crate::traits::Image;
+
+    impl Sealed for image::RgbImage {}
+    impl Image for image::RgbImage {
+        type ChannelType = u8;
+        const CHANNEL_NUM: u32 = 3;
+
+        fn new_with_dimensions(x: u32, y: u32) -> Self
+        where
+            Self: Sized,
+        {
+            Self::new(x, y)
+        }
+
+        fn width(&self) -> u32 {
+            self.width()
+        }
+
+        fn height(&self) -> u32 {
+            self.height()
+        }
+
+        fn get_pixel(&self, x: u32, y: u32) -> Option<&[u8]> {
+            self.get_pixel_checked(x, y).map(|x| x.0.as_slice())
+        }
+
+        fn get_pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut [u8]> {
+            self.get_pixel_mut_checked(x, y).map(|x| x.0.as_mut_slice())
+        }
     }
 
-    fn read_pixel(&self, x: u64, y: u64) -> Option<&[u8]> {
-        (**self).read_pixel(x, y)
+    impl Sealed for image::RgbaImage {}
+    impl Image for image::RgbaImage {
+        type ChannelType = u8;
+        const CHANNEL_NUM: u32 = 4;
+
+        fn new_with_dimensions(x: u32, y: u32) -> Self
+        where
+            Self: Sized,
+        {
+            Self::new(x, y)
+        }
+
+        fn width(&self) -> u32 {
+            self.width()
+        }
+
+        fn height(&self) -> u32 {
+            self.height()
+        }
+
+        fn get_pixel(&self, x: u32, y: u32) -> Option<&[u8]> {
+            self.get_pixel_checked(x, y).map(|x| x.0.as_slice())
+        }
+
+        fn get_pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut [u8]> {
+            self.get_pixel_mut_checked(x, y).map(|x| x.0.as_mut_slice())
+        }
     }
 
-    fn width(&self) -> u64 {
-        (**self).width()
+    impl Sealed for image::Rgb32FImage {}
+    impl Image for image::Rgb32FImage {
+        type ChannelType = f32;
+        const CHANNEL_NUM: u32 = 3;
+
+        fn new_with_dimensions(x: u32, y: u32) -> Self
+        where
+            Self: Sized,
+        {
+            Self::new(x, y)
+        }
+
+        fn width(&self) -> u32 {
+            self.width()
+        }
+
+        fn height(&self) -> u32 {
+            self.height()
+        }
+
+        fn get_pixel(&self, x: u32, y: u32) -> Option<&[u8]> {
+            self.get_pixel_checked(x, y)
+                .map(|x| slice_to_u8_slice(&x.0))
+        }
+
+        fn get_pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut [u8]> {
+            self.get_pixel_mut_checked(x, y)
+                .map(|x| slice_to_u8_slice_mut(&mut x.0))
+        }
     }
 
-    fn new_with_dimensions(_: u64, _: u64) -> Self
+    impl Sealed for image::Rgba32FImage {}
+    impl Image for image::Rgba32FImage {
+        type ChannelType = f32;
+        const CHANNEL_NUM: u32 = 4;
+
+        fn new_with_dimensions(x: u32, y: u32) -> Self
+        where
+            Self: Sized,
+        {
+            Self::new(x, y)
+        }
+
+        fn width(&self) -> u32 {
+            self.width()
+        }
+
+        fn height(&self) -> u32 {
+            self.height()
+        }
+
+        fn get_pixel(&self, x: u32, y: u32) -> Option<&[u8]> {
+            self.get_pixel_checked(x, y)
+                .map(|x| slice_to_u8_slice(&x.0))
+        }
+
+        fn get_pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut [u8]> {
+            self.get_pixel_mut_checked(x, y)
+                .map(|x| slice_to_u8_slice_mut(&mut x.0))
+        }
+    }
+
+    /// Convert an `f32` slice into a `u8` slice that takes up the same memory.
+    fn slice_to_u8_slice<'a, T>(slice: &'a [T]) -> &'a [u8]
     where
-        Self: Sized,
+        T: Sized,
     {
-        panic!()
-    }
-}
+        let len = mem::size_of_val(slice);
+        let ptr = slice.as_ptr().cast::<u8>();
 
-impl Image for image::RgbImage {
-    const PIXEL_SIZE: u64 = 3;
-
-    fn write_pixel(&mut self, x: u64, y: u64, buf: &[u8], pos: u64) -> Option<usize> {
-        let pos = pos as usize;
-        let pixel = self.read_pixel(x, y)?;
-
-        let mut channels = [0u8; 3];
-        copy_min_len(pixel, &mut channels[..pos]);
-
-        let i = copy_min_len(buf, &mut channels[pos..]);
-        self.put_pixel(x as u32, y as u32, image::Rgb(channels));
-        Some(i)
+        unsafe { slice::from_raw_parts::<'a, u8>(ptr, len) }
     }
 
-    fn read_pixel(&self, x: u64, y: u64) -> Option<&[u8]> {
-        let pixel = self.get_pixel_checked(x as u32, y as u32)?;
-        Some(&pixel.0)
-    }
-
-    fn width(&self) -> u64 {
-        self.width().into()
-    }
-
-    fn new_with_dimensions(x: u64, y: u64) -> Self
+    /// Mutable version of [`slice_to_u8_slice`].
+    fn slice_to_u8_slice_mut<'a, T>(slice: &'a mut [T]) -> &'a mut [u8]
     where
-        Self: Sized,
+        T: Sized,
     {
-        Self::new(x as u32, y as u32)
-    }
-}
+        let len = mem::size_of_val(slice);
+        let ptr = slice.as_mut_ptr().cast::<u8>();
 
-impl Image for image::RgbaImage {
-    const PIXEL_SIZE: u64 = 4;
-
-    fn write_pixel(&mut self, x: u64, y: u64, buf: &[u8], pos: u64) -> Option<usize> {
-        let pos = pos as usize;
-        let pixel = self.read_pixel(x, y)?;
-
-        let mut channels = [0u8; 4];
-        copy_min_len(pixel, &mut channels[..pos]);
-
-        let i = copy_min_len(buf, &mut channels[pos..]);
-        self.put_pixel(x as u32, y as u32, image::Rgba(channels));
-        Some(i)
-    }
-
-    fn read_pixel(&self, x: u64, y: u64) -> Option<&[u8]> {
-        let pixel = self.get_pixel_checked(x as u32, y as u32)?;
-        Some(&pixel.0)
-    }
-
-    fn width(&self) -> u64 {
-        self.width().into()
-    }
-
-    fn new_with_dimensions(x: u64, y: u64) -> Self
-    where
-        Self: Sized,
-    {
-        Self::new(x as u32, y as u32)
+        unsafe { slice::from_raw_parts_mut::<'a, u8>(ptr, len) }
     }
 }

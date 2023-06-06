@@ -1,89 +1,100 @@
-use std::io;
+#![warn(
+    clippy::all,
+    clippy::complexity,
+    clippy::correctness,
+    clippy::pedantic,
+    clippy::style
+)]
 
-use io::{Read, Write};
+use std::io::prelude::*;
 
+mod private {
+    pub trait Sealed {}
+}
+
+mod cursor;
 mod error;
-mod private;
+mod file;
 mod traits;
-mod util;
 
-pub use error::Error;
-use error::*;
+pub use error::{Error, Result};
+use traits::Image;
 
-mod reader;
-use reader::*;
+use crate::cursor::ImageCursor;
 
-mod writer;
-use writer::*;
-
-#[derive(Debug)]
-pub struct Header {
-    pub size: u64,
-}
-
-impl Header {
-    const HEADER_SIZE: usize = 8;
-
-    pub fn write_to<W>(&self, mut w: W) -> io::Result<()>
-    where
-        W: Write,
-    {
-        w.write_all(&self.size.to_be_bytes())?;
-
-        Ok(())
-    }
-
-    pub fn read_from<R>(mut r: R) -> io::Result<Self>
-    where
-        R: Read,
-    {
-        let mut raw: [u8; 8] = [0; 8];
-        let _ = r.read(&mut raw)?;
-
-        Ok(Self {
-            size: u64::from_be_bytes(raw),
-        })
-    }
-}
-
-pub fn to_image<I>(data: impl AsRef<[u8]>, aspect_ratio: f64) -> Result<I>
+/// Get the minimum dimensions for an image of type `I` that fits `data`.
+///
+/// # Safety
+///
+/// `aspect_ratio` must be greater than (`>`) 0
+#[must_use = "unused image dimensions"]
+pub fn image_dimensions<I>(data: impl AsRef<[u8]>, aspect_ratio: f64) -> (u32, u32)
 where
-    I: traits::Image,
+    I: Image,
 {
     let data = data.as_ref();
 
-    let total_bytes: u64 = usize::checked_add(Header::HEADER_SIZE, data.len())
-        .ok_or(Error::SizeLimit)?
-        .try_into()
-        .map_err(|_| Error::SizeLimit)?;
+    if data.is_empty() {
+        (0, 0)
+    } else {
+        let total_bytes = (file::Header::SIZE as u64) + (data.len() as u64);
+        let pixel_num = total_bytes / u64::from(I::PIXEL_SIZE);
 
-    let total_pixels: u64 = ((total_bytes as f64) / (I::PIXEL_SIZE as f64)).ceil() as u64;
-    let (image_x, image_y) = min_dimensions_from_pixels(total_pixels, aspect_ratio);
+        min_dimensions_from_pixels(pixel_num, aspect_ratio)
+    }
+}
 
-    let mut w = ImageWriter::new(I::new_with_dimensions(image_x, image_y));
+/// Get the maximum amount of bytes an image of type `I` with dimensions `X`x`Y` can hold.
+#[must_use]
+pub fn image_capacity<I>(x: u32, y: u32) -> u64
+where
+    I: Image,
+{
+    let pixel_num = u64::from(x) * u64::from(y);
+    pixel_num * u64::from(I::PIXEL_SIZE)
+}
 
-    let header = Header {
+/// Write `data` to an image with dimensions from [`image_dimensions()`] and return it.
+///
+/// # Panics
+///
+/// See [`image_dimensions`]
+pub fn to_image<I>(data: impl AsRef<[u8]>, aspect_ratio: f64) -> I
+where
+    I: Image,
+{
+    let data = data.as_ref();
+
+    let (image_x, image_y) = image_dimensions::<I>(data, aspect_ratio);
+
+    let mut image = ImageCursor::new(I::new_with_dimensions(image_x, image_y));
+
+    let header = file::Header {
         size: data.len() as u64,
     };
 
-    header.write_to(&mut w)?;
-    w.write_all(data)?;
+    header.write_to(&mut image).expect("write to image failed");
+    image.write_all(data).expect("write to image failed");
 
-    Ok(w.into_image())
+    image.into_image()
 }
 
+/// Read an image of type `I` and return the contained data in it.
+///
+/// # Errors
+///
+/// - Image data size is too large
 pub fn from_image<I>(image: I) -> Result<Vec<u8>>
 where
-    I: traits::Image,
+    I: Image,
 {
-    let mut r = ImageReader::new(image);
+    let mut image = ImageCursor::new(image);
 
-    let header = Header::read_from(&mut r)?;
+    let header = file::Header::read_from(&mut image)?;
 
-    let data_length: usize = header.size.try_into().map_err(|_| Error::SizeLimit)?;
-
-    let mut data = vec![0u8; data_length];
-    r.read_exact(&mut data)?;
+    let size: usize = header.size.try_into().map_err(|_| Error::SizeLimit)?;
+    let mut data = vec![0u8; size];
+    image.read_exact(&mut data)?;
 
     Ok(data)
 }
@@ -137,7 +148,7 @@ where
 /// The product of `m` and `n` must be equal to the
 /// number of pixels in the image.
 ///
-/// ```no_run
+/// ```ignore
 /// (2) m / n = λ
 /// ```
 ///
@@ -183,21 +194,28 @@ where
 /// m = √(c * λ)
 /// n = √(c / λ)
 /// ```
-fn min_dimensions_from_pixels(pixel_num: u64, aspect_ratio: f64) -> (u64, u64) {
+#[allow(
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation
+)]
+fn min_dimensions_from_pixels(pixel_num: u64, aspect_ratio: f64) -> (u32, u32) {
     let pixel_num = pixel_num as f64;
 
-    if !pixel_num.is_finite() || pixel_num <= 0.0 {
-        panic!("number of pixels must be non-zero")
-    }
+    assert!(
+        pixel_num.is_finite() && pixel_num > 0.0,
+        "number of pixels must be non-zero"
+    );
 
-    if !aspect_ratio.is_finite() || aspect_ratio <= 0.0 {
-        panic!("aspect ratio must be positive and non-zero")
-    }
+    assert!(
+        aspect_ratio.is_finite() && aspect_ratio > 0.0,
+        "aspect ratio must be positive and non-zero"
+    );
 
     // Round up to the nearest integer, we cannot have
     // half-pixels.
-    let x = (pixel_num * aspect_ratio).sqrt().ceil() as u64;
-    let y = (pixel_num / aspect_ratio).sqrt().ceil() as u64;
+    let x = (pixel_num * aspect_ratio).sqrt().ceil() as u32;
+    let y = (pixel_num / aspect_ratio).sqrt().ceil() as u32;
 
     (x, y)
 }

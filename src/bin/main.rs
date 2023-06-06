@@ -125,9 +125,9 @@ fn encode(global_args: &CliArgs, cmd_args: &EncodeArgs) -> Result<()> {
     input_file.read_to_end(&mut data)?;
 
     match cmd_args.pixel_format {
-        PixelFormat::Rgb8 => imgcode::to_image::<image::RgbImage>(&data, cmd_args.aspect_ratio)?
+        PixelFormat::Rgb8 => imgcode::to_image::<image::RgbImage>(&data, cmd_args.aspect_ratio)
             .write_to(&mut output_file, cmd_args.format)?,
-        PixelFormat::Rgba8 => imgcode::to_image::<image::RgbaImage>(&data, cmd_args.aspect_ratio)?
+        PixelFormat::Rgba8 => imgcode::to_image::<image::RgbaImage>(&data, cmd_args.aspect_ratio)
             .write_to(&mut output_file, cmd_args.format)?,
     }
 

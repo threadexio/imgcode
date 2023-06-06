@@ -2,7 +2,9 @@
 	"cSpell.words": [
 		"bincode",
 		"imgcode",
-		"subslice"
+		"impls",
+		"subslice",
+		"xyrem"
 	],
 	"rust-analyzer.check.extraArgs": [
 		"--lib"
